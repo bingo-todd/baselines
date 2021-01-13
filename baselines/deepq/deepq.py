@@ -1,3 +1,4 @@
+import os
 import os.path as osp
 
 import tensorflow as tf
@@ -14,8 +15,7 @@ from baselines.deepq.replay_buffer import ReplayBuffer, PrioritizedReplayBuffer
 from baselines.deepq.models import build_q_func
 
 
-
-def learn(env,
+def learn(env,  # noqa: C901
           network,
           seed=None,
           lr=5e-4,
@@ -26,6 +26,7 @@ def learn(env,
           train_freq=1,
           batch_size=32,
           print_freq=100,
+          log_path=None,
           checkpoint_freq=10000,
           checkpoint_path=None,
           learning_starts=1000,
@@ -39,8 +40,7 @@ def learn(env,
           param_noise=False,
           callback=None,
           load_path=None,
-          **network_kwargs
-            ):
+          **network_kwargs):
     """Train a deepq model.
 
     Parameters
@@ -48,11 +48,15 @@ def learn(env,
     env: gym.Env
         environment to train on
     network: string or a function
-        neural network to use as a q function approximator. If string, has to be one of the names of registered models in baselines.common.models
-        (mlp, cnn, conv_only). If a function, should take an observation tensor and return a latent variable tensor, which
-        will be mapped to the Q function heads (see build_q_func in baselines.deepq.models for details on that)
+        neural network to use as a q function approximator. If string, has to
+        be one of the names of registered models in baselines.common.models
+        (mlp, cnn, conv_only). If a function, should take an observation
+        tensor and return a latent variable tensor, which will be mapped to
+        the Q function heads (see build_q_func in baselines.deepq.models for
+        details on that)
     seed: int or None
-        prng seed. The runs with the same seed "should" give the same results. If None, no seeding is used.
+        prng seed. The runs with the same seed "should" give the same results.
+        If None, no seeding is used.
     lr: float
         learning rate for adam optimizer
     total_timesteps: int
@@ -60,7 +64,8 @@ def learn(env,
     buffer_size: int
         size of the replay buffer
     exploration_fraction: float
-        fraction of entire training period over which the exploration rate is annealed
+        fraction of entire training period over which the exploration rate is
+        annealed
     exploration_final_eps: float
         final value of random action probability
     train_freq: int
@@ -72,11 +77,13 @@ def learn(env,
         how often to print out training progress
         set to None to disable printing
     checkpoint_freq: int
-        how often to save the model. This is so that the best version is restored
-        at the end of the training. If you do not wish to restore the best version at
+        how often to save the model. This is so that the best version is
+        restored at the end of the training. If you do not wish to restore the
+        best version at
         the end of the training set this variable to None.
     learning_starts: int
-        how many steps of the model to collect transitions for before learning starts
+        how many steps of the model to collect transitions for before learning
+        starts
     gamma: float
         discount factor
     target_network_update_freq: int
@@ -88,12 +95,13 @@ def learn(env,
     prioritized_replay_beta0: float
         initial value of beta for prioritized replay buffer
     prioritized_replay_beta_iters: int
-        number of iterations over which beta will be annealed from initial value
-        to 1.0. If set to None equals to total_timesteps.
+        number of iterations over which beta will be annealed from initial
+        value to 1.0. If set to None equals to total_timesteps.
     prioritized_replay_eps: float
         epsilon to add to the TD errors when updating priorities.
     param_noise: bool
-        whether or not to use parameter space noise (https://arxiv.org/abs/1706.01905)
+        whether or not to use parameter space noise
+        (https://arxiv.org/abs/1706.01905)
     callback: (locals, globals) -> None
         function called at every steps with state of the algorithm.
         If callback returns true training stops.
@@ -106,7 +114,8 @@ def learn(env,
     -------
     act: ActWrapper
         Wrapper over act function. Adds ability to save it and load it.
-        See header of baselines/deepq/categorical.py for details on the act function.
+        See header of baselines/deepq/categorical.py for details on the act
+        function.
     """
     # Create all the functions necessary to train the model
 
@@ -114,8 +123,8 @@ def learn(env,
 
     q_func = build_q_func(network, **network_kwargs)
 
-    # capture the shape outside the closure so that the env object is not serialized
-    # by cloudpickle when serializing make_obs_ph
+    # capture the shape outside the closure so that the env object is not
+    # serialized by cloudpickle when serializing make_obs_ph
 
     observation_space = env.observation_space
 
@@ -138,7 +147,8 @@ def learn(env,
 
     # Create the replay buffer
     if prioritized_replay:
-        replay_buffer = PrioritizedReplayBuffer(buffer_size, alpha=prioritized_replay_alpha)
+        replay_buffer = PrioritizedReplayBuffer(buffer_size,
+                                                alpha=prioritized_replay_alpha)
         if prioritized_replay_beta_iters is None:
             prioritized_replay_beta_iters = total_timesteps
         beta_schedule = LinearSchedule(prioritized_replay_beta_iters,
@@ -148,7 +158,8 @@ def learn(env,
         replay_buffer = ReplayBuffer(buffer_size)
         beta_schedule = None
     # Create the schedule for exploration starting from 1.
-    exploration = LinearSchedule(schedule_timesteps=int(exploration_fraction * total_timesteps),
+    exploration = LinearSchedule(schedule_timesteps=int(exploration_fraction
+                                                        * total_timesteps),
                                  initial_p=1.0,
                                  final_p=exploration_final_eps)
 
@@ -162,6 +173,16 @@ def learn(env,
         obs = np.expand_dims(np.array(obs), axis=0)
     reset = True
 
+    if log_path is not None:
+        train_logger = open(log_path, 'w')
+    else:
+        train_logger = None
+
+    # if checkpoint_path exists, load q_network from checkpoint_path
+    if checkpoint_path is not None and os.path.exists(checkpoint_path):
+        model.q_network.load_weights(checkpoint_path)
+        print(f'load q_network from {checkpoint_path}')
+
     for t in range(total_timesteps):
         if callback is not None:
             if callback(locals(), globals()):
@@ -172,15 +193,21 @@ def learn(env,
             update_param_noise_threshold = 0.
         else:
             update_eps = tf.constant(0.)
-            # Compute the threshold such that the KL divergence between perturbed and non-perturbed
-            # policy is comparable to eps-greedy exploration with eps = exploration.value(t).
-            # See Appendix C.1 in Parameter Space Noise for Exploration, Plappert et al., 2017
+            # Compute the threshold such that the KL divergence between
+            # perturbed and non-perturbed policy is comparable to eps-greedy
+            # exploration with eps = exploration.value(t). See Appendix C.1 in
+            # Parameter Space Noise for Exploration, Plappert et al., 2017
             # for detailed explanation.
-            update_param_noise_threshold = -np.log(1. - exploration.value(t) + exploration.value(t) / float(env.action_space.n))
+            update_param_noise_threshold = -np.log(
+                1. - exploration.value(t)
+                + exploration.value(t) / float(env.action_space.n))
             kwargs['reset'] = reset
-            kwargs['update_param_noise_threshold'] = update_param_noise_threshold
+            kwargs['update_param_noise_threshold'] = \
+                update_param_noise_threshold
             kwargs['update_param_noise_scale'] = True
-        action, _, _, _ = model.step(tf.constant(obs), update_eps=update_eps, **kwargs)
+
+        action, _, _, _ = model.step(tf.constant(obs), update_eps=update_eps,
+                                     **kwargs)
         action = action[0].numpy()
         reset = False
         new_obs, rew, done, _ = env.step(action)
@@ -189,31 +216,33 @@ def learn(env,
             new_obs = np.expand_dims(np.array(new_obs), axis=0)
             replay_buffer.add(obs[0], action, rew, new_obs[0], float(done))
         else:
-            replay_buffer.add(obs[0], action, rew[0], new_obs[0], float(done[0]))
+            replay_buffer.add(obs[0], action, rew[0], new_obs[0],
+                              float(done[0]))
         # # Store transition in the replay buffer.
         # replay_buffer.add(obs, action, rew, new_obs, float(done))
         obs = new_obs
 
         episode_rewards[-1] += rew
-        if done:
-            obs = env.reset()
-            if not isinstance(env, VecEnv):
-                obs = np.expand_dims(np.array(obs), axis=0)
-            episode_rewards.append(0.0)
-            reset = True
 
         if t > learning_starts and t % train_freq == 0:
-            # Minimize the error in Bellman's equation on a batch sampled from replay buffer.
+            # Minimize the error in Bellman's equation on a batch sampled from
+            # replay buffer.
             if prioritized_replay:
-                experience = replay_buffer.sample(batch_size, beta=beta_schedule.value(t))
-                (obses_t, actions, rewards, obses_tp1, dones, weights, batch_idxes) = experience
+                experience = replay_buffer.sample(batch_size,
+                                                  beta=beta_schedule.value(t))
+                (obses_t, actions, rewards,
+                 obses_tp1, dones, weights, batch_idxes) = experience
             else:
-                obses_t, actions, rewards, obses_tp1, dones = replay_buffer.sample(batch_size)
+                (obses_t, actions, rewards,
+                 obses_tp1, dones) = replay_buffer.sample(batch_size)
                 weights, batch_idxes = np.ones_like(rewards), None
             obses_t, obses_tp1 = tf.constant(obses_t), tf.constant(obses_tp1)
-            actions, rewards, dones = tf.constant(actions), tf.constant(rewards), tf.constant(dones)
+            actions = tf.constant(actions)
+            rewards = tf.constant(rewards)
+            dones = tf.constant(dones)
             weights = tf.constant(weights)
-            td_errors = model.train(obses_t, actions, rewards, obses_tp1, dones, weights)
+            td_errors = model.train(obses_t, actions, rewards, obses_tp1,
+                                    dones, weights)
             if prioritized_replay:
                 new_priorities = np.abs(td_errors) + prioritized_replay_eps
                 replay_buffer.update_priorities(batch_idxes, new_priorities)
@@ -222,13 +251,38 @@ def learn(env,
             # Update target network periodically.
             model.update_target()
 
-        mean_100ep_reward = round(np.mean(episode_rewards[-101:-1]), 1)
-        num_episodes = len(episode_rewards)
-        if done and print_freq is not None and len(episode_rewards) % print_freq == 0:
-            logger.record_tabular("steps", t)
-            logger.record_tabular("episodes", num_episodes)
-            logger.record_tabular("mean 100 episode reward", mean_100ep_reward)
-            logger.record_tabular("% time spent exploring", int(100 * exploration.value(t)))
-            logger.dump_tabular()
+        if done:
+            num_episodes = len(episode_rewards)
+            # save q_network
+            if (checkpoint_freq is not None and checkpoint_path is not None
+                    and num_episodes % checkpoint_freq == 0):
+                n_episode = len(episode_rewards)
+                model.q_network.save_weights(checkpoint_path)
+
+            # loging
+            if (print_freq is not None and
+                    len(episode_rewards) % print_freq == 0):
+                mean_100ep_reward = round(np.mean(episode_rewards[-101:-1]), 1)
+                logger.record_tabular("steps", t)
+                logger.record_tabular("episodes", num_episodes)
+                logger.record_tabular("mean 100 episode reward",
+                                      mean_100ep_reward)
+                logger.record_tabular("% time spent exploring",
+                                      int(100 * exploration.value(t)))
+                logger.dump_tabular()
+
+                if train_logger is not None:
+                    train_logger.write(f'{t}: {mean_100ep_reward}\n')
+                    train_logger.flush()
+
+            # reset env
+            obs = env.reset()
+            if not isinstance(env, VecEnv):
+                obs = np.expand_dims(np.array(obs), axis=0)
+            episode_rewards.append(0.0)
+            reset = True
+
+    if train_logger is not None:
+        train_logger.close()
 
     return model
