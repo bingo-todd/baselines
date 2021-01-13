@@ -262,7 +262,7 @@ def learn(env,  # noqa: C901
             # loging
             if (print_freq is not None and
                     len(episode_rewards) % print_freq == 0):
-                mean_100ep_reward = round(np.mean(episode_rewards[-101:-1]), 1)
+                mean_100ep_reward = round(np.mean(episode_rewards[-100:]), 1)
                 logger.record_tabular("steps", t)
                 logger.record_tabular("episodes", num_episodes)
                 logger.record_tabular("mean 100 episode reward",
