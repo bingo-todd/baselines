@@ -19,7 +19,8 @@ def learn(env,  # noqa: C901
           network,
           seed=None,
           lr=5e-4,
-          total_timesteps=100000,
+          total_timesteps=2**63,
+          total_episodes=2**63,
           buffer_size=50000,
           exploration_fraction=0.1,
           exploration_final_eps=0.02,
@@ -27,8 +28,8 @@ def learn(env,  # noqa: C901
           batch_size=32,
           print_freq=100,
           log_path=None,
-          checkpoint_freq=10000,
-          checkpoint_path=None,
+          save_freq=100,
+          model_dir=None,
           learning_starts=1000,
           gamma=1.0,
           target_network_update_freq=500,
@@ -39,7 +40,6 @@ def learn(env,  # noqa: C901
           prioritized_replay_eps=1e-6,
           param_noise=False,
           callback=None,
-          load_path=None,
           **network_kwargs):
     """Train a deepq model.
 
@@ -76,7 +76,7 @@ def learn(env,  # noqa: C901
     print_freq: int
         how often to print out training progress
         set to None to disable printing
-    checkpoint_freq: int
+    save_freq: int
         how often to save the model. This is so that the best version is
         restored at the end of the training. If you do not wish to restore the
         best version at
@@ -105,8 +105,6 @@ def learn(env,  # noqa: C901
     callback: (locals, globals) -> None
         function called at every steps with state of the algorithm.
         If callback returns true training stops.
-    load_path: str
-        path to load the model from. (default: None)
     **network_kwargs
         additional keyword arguments to pass to the network builder.
 
@@ -138,10 +136,10 @@ def learn(env,  # noqa: C901
         param_noise=param_noise
     )
 
-    if load_path is not None:
-        load_path = osp.expanduser(load_path)
-        ckpt = tf.train.Checkpoint(model=model)
-        manager = tf.train.CheckpointManager(ckpt, load_path, max_to_keep=None)
+    ckpt = tf.train.Checkpoint(model=model)
+    manager = tf.train.CheckpointManager(ckpt, model_dir, max_to_keep=10)
+    if model_dir is not None and os.path.exists(f'{model_dir}/checkpoint'):
+        model_dir = osp.expanduser(model_dir)
         ckpt.restore(manager.latest_checkpoint)
         print("Restoring from {}".format(manager.latest_checkpoint))
 
@@ -177,11 +175,6 @@ def learn(env,  # noqa: C901
         train_logger = open(log_path, 'w')
     else:
         train_logger = None
-
-    # if checkpoint_path exists, load q_network from checkpoint_path
-    if checkpoint_path is not None and os.path.exists(checkpoint_path):
-        model.q_network.load_weights(checkpoint_path)
-        print(f'load q_network from {checkpoint_path}')
 
     for t in range(total_timesteps):
         if callback is not None:
@@ -254,33 +247,36 @@ def learn(env,  # noqa: C901
         if done:
             num_episodes = len(episode_rewards)
             # save q_network
-            if (checkpoint_freq is not None and checkpoint_path is not None
-                    and num_episodes % checkpoint_freq == 0):
-                n_episode = len(episode_rewards)
-                model.q_network.save_weights(checkpoint_path)
+            if model_dir is not None and num_episodes % save_freq == 0:
+                manager.save()
 
             # loging
             if (print_freq is not None and
                     len(episode_rewards) % print_freq == 0):
-                mean_100ep_reward = round(np.mean(episode_rewards[-100:]), 1)
+                mean_ep_reward = \
+                    round(np.mean(episode_rewards[-print_freq:]), 1)
                 logger.record_tabular("steps", t)
                 logger.record_tabular("episodes", num_episodes)
-                logger.record_tabular("mean 100 episode reward",
-                                      mean_100ep_reward)
+                logger.record_tabular(f"mean {print_freq} episode reward",
+                                      mean_ep_reward)
                 logger.record_tabular("% time spent exploring",
                                       int(100 * exploration.value(t)))
                 logger.dump_tabular()
 
                 if train_logger is not None:
-                    train_logger.write(f'{t}: {mean_100ep_reward}\n')
+                    train_logger.write(f'{t}: {mean_ep_reward}\n')
                     train_logger.flush()
 
-            # reset env
-            obs = env.reset()
-            if not isinstance(env, VecEnv):
-                obs = np.expand_dims(np.array(obs), axis=0)
-            episode_rewards.append(0.0)
-            reset = True
+            if num_episodes > total_episodes:
+                print(f'reach {total_episodes}')
+                break
+            else:
+                # reset env
+                obs = env.reset()
+                if not isinstance(env, VecEnv):
+                    obs = np.expand_dims(np.array(obs), axis=0)
+                episode_rewards.append(0.0)
+                reset = True
 
     if train_logger is not None:
         train_logger.close()
